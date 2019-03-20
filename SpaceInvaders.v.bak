@@ -1,0 +1,238 @@
+module SpaceInvaders(CLOCK_50
+					SW,
+					KEY,
+					HEX0,
+					HEX1,
+					HEX2,
+					// The parts below are for the VGA output.  Do not change.
+					VGA_CLK,   						//	VGA Clock
+					VGA_HS,							//	VGA H_SYNC
+					VGA_VS,							//	VGA V_SYNC
+					VGA_BLANK_N,						//	VGA BLANK
+					VGA_SYNC_N,						//	VGA SYNC
+					VGA_R,   						//	VGA Red[9:0]
+					VGA_G,	 						//	VGA Green[9:0]
+					VGA_B					//	VGA Blue[9:0]
+		);
+	input CLOCK_50;
+	// used for control
+	input [17:0] SW;
+	input [3:0] KEY;
+	
+	// outputs for VGA
+	// Do not change the following outputs
+	output			VGA_CLK;   				//	VGA Clock
+	output			VGA_HS;					//	VGA H_SYNC
+	output			VGA_VS;					//	VGA V_SYNC
+	output			VGA_BLANK_N;				//	VGA BLANK
+	output			VGA_SYNC_N;				//	VGA SYNC
+	output	[9:0]	VGA_R;   				//	VGA Red[9:0]
+	output	[9:0]	VGA_G;	 				//	VGA Green[9:0]
+	output	[9:0]	VGA_B;   				//	VGA Blue[9:0]
+	
+	// Create the colour, x, y and writeEn wires that are inputs to the controller.
+	reg [2:0] colour;
+	reg [7:0] x;
+	reg [7:0] y;
+
+	// Create an Instance of a VGA controller - there can be only one!
+	// Define the number of colours as well as the initial background
+	// image file (.MIF) for the controller.
+	vga_adapter VGA(
+			.resetn(resetn),
+			.clock(CLOCK_50),
+			.colour(colour),
+			.x(x),
+			.y(y),
+			.plot(1'b1),
+			/* Signals for the DAC to drive the monitor. */
+			.VGA_R(VGA_R),
+			.VGA_G(VGA_G),
+			.VGA_B(VGA_B),
+			.VGA_HS(VGA_HS),
+			.VGA_VS(VGA_VS),
+			.VGA_BLANK(VGA_BLANK_N),
+			.VGA_SYNC(VGA_SYNC_N),
+			.VGA_CLK(VGA_CLK));
+		defparam VGA.RESOLUTION = "160x120";
+		defparam VGA.MONOCHROME = "FALSE";
+		defparam VGA.BITS_PER_COLOUR_CHANNEL = 1;
+		defparam VGA.BACKGROUND_IMAGE = "black.mif";
+	
+	// coordinates for player, bullet, and the aliens
+	reg [7:0] p_x;
+	reg [7:0] p_y;
+	reg [7:0] bullet_x;
+	reg [7:0] bullet_y;
+	reg [7:0] A1alien_x;
+	reg [7:0] A1alien_y;
+	// tracking current state
+	reg [6:0] current_state, next_state;
+	// counter for drawing shapes
+	reg [17:0] draw_count;
+	// mark if aliens are moving right or left (1'b1 is moving right, 1'b0 moving left) 
+	reg alien_right;
+	
+	/***************************************
+	FSM begins
+	****************************************/
+	localparam  RESET_BLACK 	= 7'd0,
+				INIT_PLAYER 	= 7'd1,
+				INIT_BULLET		= 7'd2,
+				INIT_A1 		= 7'd3,
+				WAIT			= 7'd4,
+
+				ERASE_PLAYER 	= 7'd5,
+				UPDATE_PLAYER 	= 7'd6,
+				DRAW_PLAYER 	= 7'd7,
+				ERASE_BULLET 	= 7'd8,
+				UPDATE_BULLET 	= 7'd9,
+				DRAW_BULLET 	= 7'd10,
+
+				ERASE_A1 		= 7'd11,
+				UPDATE_A1 		= 7'd12,
+				DRAW_A1			= 7'd13,
+
+				LOSE			= 7'd14;
+	
+	always @(posedge CLOCK_50)
+	begin
+		// set initial values
+		colour = 3'b000;
+		x = 8'b00000000;
+		y = 8'b00000000;
+		
+		// when receive reset signal
+		if (~KEY[0])
+			current_state = RESET_BLACK;
+		
+		case(current_state)
+			RESET_BLACK: begin
+				// reset the screen by making it all black
+				if (draw_count < 17'b1000_0000_0000_0000_0) begin
+					x = draw_count[7:0];
+					y = draw_count[15:8];
+					draw_count = draw_count + 1'b1;
+					end
+				else begin
+					draw_count = 18'b0;
+					current_state = INIT_PLAYER;
+					end
+				end
+			INIT_PLAYER: begin
+				// initialize the player
+				if (draw_count < 10'b100000_0000) begin
+					p_x = 8'd76;
+					p_y = 8'd110;
+					x = p_x + draw_count[3:0];
+					y = p_y + draw_count[9:4];
+					draw_count = draw_count + 1'b1;
+					colour = 3'b111;
+					end
+				else begin
+					draw_count= 18'b0;
+					current_state = ERASE_PLAYER; // CHANGE TO INIT____ LATER
+					end
+				end
+
+			ERASE_PLAYER: begin
+				// remove the player from screen
+				if (draw_count < 10'b100000_0000) begin
+					p_x = 8'd76;
+					p_y = 8'd110;
+					x = p_x + draw_count[3:0];
+					y = p_y + draw_count[9:4];
+					draw_count = draw_count + 1'b1;
+					end
+				else begin
+					draw_count= 18'b0;
+					current_state = UPDATE_PLAYER;
+					end
+				end
+			UPDATE_PLAYER: begin
+				// update new player position
+				// make sure that player can't move further past the left or right of the screen
+				if (~KEY[1] && p_x < 8'd144)
+					p_x = p_x + 1'b1;
+				if (~KEY[2] && p_x > 8'd0)
+					p_x = p_x - 1'b1;
+				end
+				current_state = DRAW_PLAYER;
+			DRAW_PLAYER: begin
+				if (draw_count < 10'b100000_0000) begin
+					p_x = 8'd76;
+					p_y = 8'd110;
+					x = p_x + draw_count[3:0];
+					y = p_y + draw_count[9:4];
+					draw_count = draw_count + 1'b1;
+					colour = 3'b111;
+					end
+				else begin
+					draw_count= 18'b0;
+					current_state = ERASE_PLAYER;
+					end
+				end
+			default: current_state = RESET_BLACK;
+	end
+	
+endmodule
+
+
+/*
+module datapath(
+	input clk,
+	input resetn,
+	input [3:0] update,
+	output reg [7:0] x,
+	output reg [7:0] y
+	);
+	
+	reg [7:0] p_x;
+	reg [7:0] p_y;
+	reg [7:0] bullet_x;
+	reg [7:0] bullet_y;
+	reg [7:0] A1alien_x;
+	reg [7:0] A1alien_y;
+
+endmodule
+
+
+module control(
+	input clk,
+	input resetn,
+	input mv_left,
+	input mv_right,
+	output 
+	);
+	
+	reg [6:0] current_state, next_state;
+	
+	localparam  RESET_BLACK 	= 7'b0000000,
+				INIT_PLAYER 	= 7'b0000001,
+				INIT_A1 		= 7'b0000010,
+				WAIT			= 7'b0000011,
+				ERASE_PLAYER 	= 7'b0000100,
+				UPDATE_PLAYER 	= 7'b0000101,
+				DRAW_PLAYER 	= 7'b0000110,
+				ERASE_BULLET 	= 7'b0000111,
+				UPDATE_BULLET 	= 7'b0001000,
+				DRAW_BULLET 	= 7'b0001001,
+
+				ERASE_A1 		= 7'b0001011,
+				UPDATE_A1 		= 7'b0001101,
+				DRAW_A1			= 7'b0001110,
+
+				LOSE			= 7'b1111111;
+
+	// state table
+	always @(posedge clk)
+	begin
+		if (resetn == 1'b1)
+			current_state = RESET_BLACK
+
+		case(current_state)
+			
+		default:
+	end
+endmodule
+*/
