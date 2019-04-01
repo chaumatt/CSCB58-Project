@@ -3,7 +3,6 @@ module SpaceInvaders(CLOCK_50,
 					KEY,
 					HEX0,
 					HEX1,
-					HEX2,
 					LEDR,
 					// The parts below are for the VGA output.  Do not change.
 					VGA_CLK,   						//	VGA Clock
@@ -20,10 +19,9 @@ module SpaceInvaders(CLOCK_50,
 	input [17:0] SW;
 	input [3:0] KEY;
 	
-	// NOT IMPLEMENTED YET outputs Hex (for score)
+	// outputs Hex (for score)
 	output [6:0] HEX0;
 	output [6:0] HEX1;
-	output [6:0] HEX2;
 	
 	output [17:0] LEDR;
 	
@@ -104,11 +102,23 @@ module SpaceInvaders(CLOCK_50,
 	// x_rate 
 	reg [2:0] x_rate;
 	
+	// score
+	reg [7:0] score;
+	wire [7:0] formatted_score;
+	
 	reg led0, led1, led2, led3;
 	assign LEDR[0] = led0;
 	assign LEDR[3] = led3;
 	assign LEDR[1] = led1;
 	assign LEDR[2] = led2;
+	
+	format_score fc(.score(score),
+						 .formatted(formatted_score));
+	hex_display h0(.IN(formatted_score[3:0]),
+						.OUT(HEX0));
+	hex_display h1(.IN(formatted_score[7:4]),
+						.OUT(HEX1));
+
 	
 	/***************************************
 	FSM and datapath begins
@@ -147,7 +157,8 @@ module SpaceInvaders(CLOCK_50,
 				DRAW_LINE = 7'd16,
 				WIN = 7'd29,
 				SET_X = 7'd0,
-				LVL_UP = 7'd31;
+				LVL_UP = 7'd31,
+				UPDATE_SCORE = 7'd32;
 	
 	// rate divider, delay before redraw
 	wire frame;
@@ -163,10 +174,13 @@ module SpaceInvaders(CLOCK_50,
 		// when receive reset signal
 		if (~KEY[0])
 			current_state = RESET_BLACK;
+		if (~KEY[0] & ~KEY[1])
+			current_state = SET_X;
 		
 		case(current_state)
 			SET_X: begin
 				x_rate = 3'b000;
+				score = 12'b0;
 				current_state = RESET_BLACK;
 			end
 			RESET_BLACK: begin
@@ -209,7 +223,7 @@ module SpaceInvaders(CLOCK_50,
 					end
 				else begin
 					draw_count= 18'b0;
-					current_state = INIT_BULLET; // CHANGE TO INIT____ LATER
+					current_state = INIT_BULLET;
 					end
 				end
 			INIT_BULLET: begin
@@ -239,7 +253,7 @@ module SpaceInvaders(CLOCK_50,
 					end
 				else begin
 					draw_count= 18'b0;
-					current_state = INIT_A2; // CHANGE TO INIT____ LATER
+					current_state = INIT_A2;
 					end
 				end
 			
@@ -258,7 +272,7 @@ module SpaceInvaders(CLOCK_50,
 					end
 				else begin
 					draw_count= 18'b0;
-					current_state = INIT_A3; // CHANGE TO INIT____ LATER
+					current_state = INIT_A3;
 					end
 				end
 			INIT_A3: begin
@@ -276,8 +290,8 @@ module SpaceInvaders(CLOCK_50,
 					end
 				else begin
 					draw_count= 18'b0;
-					current_state = INIT_A4; // CHANGE TO INIT____ LATER
-					end
+					current_state = INIT_A4;
+				end
 				end
 			INIT_A4: begin
 				// init alien A4
@@ -294,7 +308,7 @@ module SpaceInvaders(CLOCK_50,
 					end
 				else begin
 					draw_count= 18'b0;
-					current_state = WAIT; // CHANGE TO INIT____ LATER
+					current_state = WAIT;
 					end
 				end
 			
@@ -368,14 +382,15 @@ module SpaceInvaders(CLOCK_50,
 					// check if reached edge ofled0 left and right
 					if (A1alien_x >= 8'd144) begin
 						alien1_right = 1'b0;
+						A1alien_x = 8'd144;
 						A1alien_y = A1alien_y + 8;
 						end
 					else if ((A1alien_x <= 8'd0) && (A1alien_y != 8'd0)) begin
 						alien1_right = 1'b1;
+						A1alien_x = 8'd0;
 						A1alien_y = A1alien_y + 8;
 						end
-					//TODO: implement moving the alien
-					//TODO: rate divider for updating the aliens
+
 					if (alien1_right == 1'b1) begin
 						A1alien_x = A1alien_x + 1'b1 + x_rate;
 						end
@@ -392,8 +407,8 @@ module SpaceInvaders(CLOCK_50,
 				end
 				
 				if ((A1 == 1'b1) && (A1alien_y + 3'd7 >= p_y))begin
-						// alien reached bottom, LOSE
-						current_state = LOSE;
+						// alien reached bottom, 
+						current_state = UPDATE_SCORE;
 						end
 				end
 			DRAW_A1: begin
@@ -428,17 +443,18 @@ module SpaceInvaders(CLOCK_50,
 					// update new alien position
 					// make sure that alien can't move further past the left or right of the screen
 					
-					// check if reached edge ofled0 left and right
+					// check if reached edge of left and right
 					if (A2alien_x >= 8'd144) begin
 						alien2_right = 1'b0;
+						A2alien_x = 8'd144;
 						A2alien_y = A2alien_y + 8;
 						end
 					else if ((A2alien_x <= 8'd0) && (A2alien_y != 8'd0)) begin
 						alien2_right = 1'b1;
+						A2alien_x = 8'd0;
 						A2alien_y = A2alien_y + 8;
 						end
-					//TODO: implement moving the alien
-					//TODO: rate divider for updating the aliens
+
 					if (alien2_right == 1'b1) begin
 						A2alien_x = A2alien_x + 1'b1 + x_rate;
 						end
@@ -454,7 +470,7 @@ module SpaceInvaders(CLOCK_50,
 				
 				if ((A2 == 1'b1) && (A2alien_y + 3'd7 >= p_y))begin
 						// alien reached bottom, LOSE
-						current_state = LOSE;
+						current_state = UPDATE_SCORE;
 						end
 				
 				end
@@ -471,7 +487,7 @@ module SpaceInvaders(CLOCK_50,
 					current_state = ERASE_A3;
 					end
 				end
-						/* ALIEN A3
+			/* ALIEN A3
 			 */
 			ERASE_A3: begin
 				if (draw_count < 8'b1000_0000) begin
@@ -486,21 +502,20 @@ module SpaceInvaders(CLOCK_50,
 					end
 				end
 			UPDATE_A3: begin
-
 					// update new alien position
 					// make sure that alien can't move further past the left or right of the screen
-					
-					// check if reached edge ofled0 left and right
+					// check if reached edge of left and right
 					if (A3alien_x >= 8'd144) begin
 						alien3_right = 1'b0;
+						A3alien_x = 8'd144;
 						A3alien_y = A3alien_y + 8;
 						end
 					else if ((A3alien_x <= 8'd0) && (A3alien_y != 8'd0)) begin
 						alien3_right = 1'b1;
+						A3alien_x = 8'd0;
 						A3alien_y = A3alien_y + 8;
 						end
-					//TODO: implement moving the alien
-					//TODO: rate divider for updating the aliens
+
 					if (alien3_right == 1'b1) begin
 						A3alien_x = A3alien_x + 1'b1 + x_rate;
 						end
@@ -517,7 +532,7 @@ module SpaceInvaders(CLOCK_50,
 				
 				if ((A3 == 1'b1) && (A3alien_y + 3'd7 >= p_y))begin
 						// alien reached bottom, LOSE
-						current_state = LOSE;
+						current_state = UPDATE_SCORE;
 						end
 				end
 			DRAW_A3: begin
@@ -533,7 +548,7 @@ module SpaceInvaders(CLOCK_50,
 					current_state = ERASE_A4;
 					end
 				end
-						/* ALIEN A4
+			/* ALIEN A4
 			 */
 			ERASE_A4: begin
 				if (draw_count < 8'b1000_0000) begin
@@ -548,21 +563,20 @@ module SpaceInvaders(CLOCK_50,
 					end
 				end
 			UPDATE_A4: begin
-
 					// update new alien position
 					// make sure that alien can't move further past the left or right of the screen
-							
-					// check if reached edge ofled0 left and right
+					// check if reached edge of left and right
 					if (A4alien_x >= 8'd144) begin
 						alien4_right = 1'b0;
+						A4alien_x = 8'd144;
 						A4alien_y = A4alien_y + 8;
 						end
 					else if ((A4alien_x <= 8'd0) && (A4alien_y != 8'd0)) begin
 						alien4_right = 1'b1;
+						A4alien_x = 8'd0;
 						A4alien_y = A4alien_y + 8;
 						end
-					//TODO: implement moving the alien
-					//TODO: rate divider for updating the aliens
+
 					if (alien4_right == 1'b1) begin
 						A4alien_x = A4alien_x + 1'b1 + x_rate;
 						end
@@ -579,7 +593,7 @@ module SpaceInvaders(CLOCK_50,
 				
 				if ((A4 == 1'b1) && (A4alien_y + 3'd7 >= p_y))begin
 						// alien reached bottom, LOSE
-						current_state = LOSE;
+						current_state = UPDATE_SCORE;
 						end
 				end
 			DRAW_A4: begin
@@ -632,6 +646,7 @@ module SpaceInvaders(CLOCK_50,
 				 //test if the updated bullet hit the alien
 				if ((A1 == 1'b1) && ((bullet_x <= A1alien_x + 15) && (bullet_x >= A1alien_x)) && ((bullet_y <= A1alien_y + 7) && (bullet_y >= A1alien_y)))
 				begin
+					score = score + 1;
 					A1 = 1'b0;
 					led0 = 1'b1;
 					is_fired = 1'b0;
@@ -639,18 +654,21 @@ module SpaceInvaders(CLOCK_50,
 					end
 				else if ((A2 == 1'b1) && ((bullet_x <= A2alien_x + 15) && (bullet_x >= A2alien_x)) && ((bullet_y <= A2alien_y + 7) && (bullet_y >= A2alien_y)))
 				begin
+					score = score + 1;
 					A2 = 1'b0;
 					is_fired = 1'b0;
 					current_state = ERASE_A2;
 					end
 				else if ((A3 == 1'b1) && ((bullet_x <= A3alien_x + 15) && (bullet_x >= A3alien_x)) && ((bullet_y <= A3alien_y + 7) && (bullet_y >= A3alien_y)))
 				begin
+					score = score + 1;
 					A3 = 1'b0;
 					is_fired = 1'b0;
 					current_state = ERASE_A3;
 					end
 				else if ((A4 == 1'b1) && ((bullet_x <= A4alien_x + 15) && (bullet_x >= A4alien_x)) && ((bullet_y <= A4alien_y + 7) && (bullet_y >= A4alien_y)))
 				begin
+					score = score + 1;
 					A4 = 1'b0;
 					is_fired = 1'b0;
 					current_state = ERASE_A4;
@@ -689,6 +707,7 @@ module SpaceInvaders(CLOCK_50,
 				end
 			LVL_UP: begin
 				if (x_rate < 4) begin
+					score = score + 2;
 					x_rate = x_rate + 1;
 					current_state = RESET_BLACK; 
 				end
@@ -696,6 +715,15 @@ module SpaceInvaders(CLOCK_50,
 					current_state = WIN; 
 				end
 			end
+			
+			UPDATE_SCORE: begin
+				if (score >= 3)
+					score = score - 3;
+				else
+					score = 12'b0;
+				current_state = LOSE;
+			end
+			
 			default: current_state = RESET_BLACK;
 		endcase
 	end
