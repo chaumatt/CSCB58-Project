@@ -3,6 +3,8 @@ module SpaceInvaders(CLOCK_50,
 					KEY,
 					HEX0,
 					HEX1,
+					HEX4,
+					HEX5,
 					LEDR,
 					// The parts below are for the VGA output.  Do not change.
 					VGA_CLK,   						//	VGA Clock
@@ -14,15 +16,27 @@ module SpaceInvaders(CLOCK_50,
 					VGA_G,	 						//	VGA Green[9:0]
 					VGA_B					//	VGA Blue[9:0]
 		);
+	// KEY[0] reset to the same level
+	// KEY[1] moves right
+	// KEY[2] moves left
+	// KEY[3] fires bullet
+	// KEY[0] + KEY[1] together resets to level 0 (speed level)
+	
+	// SW[0] controls if alien can fire / freezes alien fire
+	// SW[1] instantly go to WIN state
+	
 	input CLOCK_50;
 	// used for control
-	input [17:0] SW;
+	input [1:0] SW;
 	input [3:0] KEY;
 	
 	// outputs Hex (for score)
 	output [6:0] HEX0;
 	output [6:0] HEX1;
+	output [6:0] HEX4;
+	output [6:0] HEX5;
 	
+	// output for debugging
 	output [17:0] LEDR;
 	
 	// outputs for VGA
@@ -36,7 +50,7 @@ module SpaceInvaders(CLOCK_50,
 	output	[9:0]	VGA_G;	 				//	VGA Green[9:0]
 	output	[9:0]	VGA_B;   				//	VGA Blue[9:0]
 	
-	// Create the colour, x, y and writeEn wires that are inputs to the controller.
+	// Create the colour, x, y wires that are inputs to the controller.
 	reg [2:0] colour;
 	reg [7:0] x;
 	reg [7:0] y;
@@ -65,11 +79,13 @@ module SpaceInvaders(CLOCK_50,
 		defparam VGA.BITS_PER_COLOUR_CHANNEL = 1;
 		defparam VGA.BACKGROUND_IMAGE = "black.mif";
 	
-	// coordinates for player, bullet, and the aliensresetn
+	// coordinates for player, bullet, and the aliens, and alien bullet
 	reg [7:0] p_x;
 	reg [7:0] p_y;
 	reg [7:0] bullet_x;
 	reg [7:0] bullet_y;
+	reg [7:0] A_bullet_x;
+	reg [7:0] A_bullet_y;
 	reg [7:0] A1alien_x;
 	reg [7:0] A1alien_y;
 	reg [7:0] A2alien_x;
@@ -98,26 +114,38 @@ module SpaceInvaders(CLOCK_50,
 	reg alien4_right;
 	// mark if bullet has been fired  (1'b1 when fired) 
 	reg is_fired;
+	reg a_fired;
 	
 	// x_rate 
 	reg [2:0] x_rate;
 	
-	// score
+	// score on HEX0, HEX1
 	reg [7:0] score;
 	wire [7:0] formatted_score;
+	// high score on HEX4, HEX5
+	reg [7:0] high_score;
+	wire [7:0] formatted_high;
 	
+	// debugging led
 	reg led0, led1, led2, led3;
 	assign LEDR[0] = led0;
 	assign LEDR[3] = led3;
 	assign LEDR[1] = led1;
 	assign LEDR[2] = led2;
 	
+	// format the score from binary to hex display
 	format_score fc(.score(score),
 						 .formatted(formatted_score));
 	hex_display h0(.IN(formatted_score[3:0]),
 						.OUT(HEX0));
 	hex_display h1(.IN(formatted_score[7:4]),
 						.OUT(HEX1));
+	format_score fc1(.score(high_score),
+						 .formatted(formatted_high));
+	hex_display h4(.IN(formatted_high[3:0]),
+						.OUT(HEX4));
+	hex_display h5(.IN(formatted_high[7:4]),
+						.OUT(HEX5));
 
 	
 	/***************************************
@@ -152,13 +180,20 @@ module SpaceInvaders(CLOCK_50,
 				UPDATE_A4 		= 7'd27,
 				DRAW_A4			= 7'd28,
 
-				LOSE			= 7'd14,
-				TEST_HIT = 7'd15,
-				DRAW_LINE = 7'd16,
-				WIN = 7'd29,
-				SET_X = 7'd0,
-				LVL_UP = 7'd31,
-				UPDATE_SCORE = 7'd32;
+				LOSE			   = 7'd14,
+				TEST_HIT			= 7'd15,
+				DRAW_LINE		= 7'd16,
+				WIN 				= 7'd29,
+				SET_X 			= 7'd34,
+				LVL_UP 			= 7'd31,
+				UPDATE_SCORE 	= 7'd32,
+				UPDATE_HIGHEST = 7'd33,
+				INITIAL_HIGH 	= 7'd0,
+				INIT_A_BULLET 	= 7'd35,
+				ERASE_A_BULLET = 7'd36,
+				UPDATE_A_BULLET = 7'd37,
+				DRAW_A_BULLET 	= 7'd38,
+				TEST_A_HIT 		= 7'd39;
 	
 	// rate divider, delay before redraw
 	wire frame;
@@ -171,16 +206,26 @@ module SpaceInvaders(CLOCK_50,
 		x = 8'b00000000;
 		y = 8'b00000000;
 		
-		// when receive reset signal
+		// when receive reset signal, reset to current level
 		if (~KEY[0])
 			current_state = RESET_BLACK;
+		// reset level to 0
 		if (~KEY[0] & ~KEY[1])
 			current_state = SET_X;
+		// cheat to win
+		if (SW[1])
+			current_state = WIN;
 		
 		case(current_state)
+			INITIAL_HIGH: begin
+				// set the initial high score 0
+				high_score = 8'b0;
+				current_state = SET_X;
+			end
 			SET_X: begin
+				// set the inital score and level/movement rate
 				x_rate = 3'b000;
-				score = 12'b0;
+				score = 8'b0;
 				current_state = RESET_BLACK;
 			end
 			RESET_BLACK: begin
@@ -195,7 +240,7 @@ module SpaceInvaders(CLOCK_50,
 					end
 				else begin
 					draw_count= 18'b0;
-					current_state = DRAW_LINE; // CHANGE TO INIT____ LATER
+					current_state = DRAW_LINE;
 					end
 				end
 			DRAW_LINE: begin
@@ -208,7 +253,7 @@ module SpaceInvaders(CLOCK_50,
 					end
 				else begin
 					draw_count= 18'b0;
-					current_state = INIT_PLAYER; // CHANGE TO INIT____ LATER
+					current_state = INIT_PLAYER;
 					end
 				end
 			INIT_PLAYER: begin
@@ -253,10 +298,23 @@ module SpaceInvaders(CLOCK_50,
 					end
 				else begin
 					draw_count= 18'b0;
-					current_state = INIT_A2;
+					if (SW[0])
+						// if switch enabled, let alien fire
+						current_state = INIT_A_BULLET;
+					else
+						current_state = INIT_A2;
 					end
 				end
-			
+			INIT_A_BULLET: begin
+				// initialize the alien bullet
+				A_bullet_x = 8'd8;
+				A_bullet_y = 8'd9;
+				x = A_bullet_x;
+				y = A_bullet_y;
+				colour = 3'b100;
+				a_fired = 1'b1;
+				current_state = INIT_A2;
+			end
 			INIT_A2: begin
 				// init alien A2
 				if (draw_count < 8'b1000_0000) begin
@@ -313,6 +371,7 @@ module SpaceInvaders(CLOCK_50,
 				end
 			
 			WAIT: begin
+				// wait a frame
 				if (frame)
 					current_state = ERASE_PLAYER;
 				end
@@ -375,11 +434,9 @@ module SpaceInvaders(CLOCK_50,
 					end
 				end
 			UPDATE_A1: begin
-
 					// update new alien position
 					// make sure that alien can't move further past the left or right of the screen
-					
-					// check if reached edge ofled0 left and right
+					// check if reached edge of left and right
 					if (A1alien_x >= 8'd144) begin
 						alien1_right = 1'b0;
 						A1alien_x = 8'd144;
@@ -390,7 +447,8 @@ module SpaceInvaders(CLOCK_50,
 						A1alien_x = 8'd0;
 						A1alien_y = A1alien_y + 8;
 						end
-
+					
+					// update alien x position
 					if (alien1_right == 1'b1) begin
 						A1alien_x = A1alien_x + 1'b1 + x_rate;
 						end
@@ -400,14 +458,16 @@ module SpaceInvaders(CLOCK_50,
 					
 					
 				if (A1 == 1'b1) begin
+					// if alien is alive, draw it
 					current_state = DRAW_A1;
 				end
 				else begin
+					// alien is dead, erase
 					current_state = ERASE_A2;
 				end
 				
 				if ((A1 == 1'b1) && (A1alien_y + 3'd7 >= p_y))begin
-						// alien reached bottom, 
+						// alien reached bottom
 						current_state = UPDATE_SCORE;
 						end
 				end
@@ -454,7 +514,7 @@ module SpaceInvaders(CLOCK_50,
 						A2alien_x = 8'd0;
 						A2alien_y = A2alien_y + 8;
 						end
-
+					// update alien x
 					if (alien2_right == 1'b1) begin
 						A2alien_x = A2alien_x + 1'b1 + x_rate;
 						end
@@ -462,9 +522,11 @@ module SpaceInvaders(CLOCK_50,
 						A2alien_x = A2alien_x - 1'b1 - x_rate;
 						end
 				if (A2 == 1'b1) begin
+					// if alive, draw
 					current_state = DRAW_A2;
 				end
 				else begin
+					// dead, go to next alien
 					current_state = ERASE_A3;
 				end
 				
@@ -515,7 +577,7 @@ module SpaceInvaders(CLOCK_50,
 						A3alien_x = 8'd0;
 						A3alien_y = A3alien_y + 8;
 						end
-
+					// update alien x position
 					if (alien3_right == 1'b1) begin
 						A3alien_x = A3alien_x + 1'b1 + x_rate;
 						end
@@ -524,9 +586,11 @@ module SpaceInvaders(CLOCK_50,
 						end
 				
 				if (A3 == 1'b1) begin
+					// if alive, draw
 					current_state = DRAW_A3;
 				end
 				else begin
+					// dead, go to next alien
 					current_state = ERASE_A4;
 				end
 				
@@ -576,7 +640,7 @@ module SpaceInvaders(CLOCK_50,
 						A4alien_x = 8'd0;
 						A4alien_y = A4alien_y + 8;
 						end
-
+					// update x
 					if (alien4_right == 1'b1) begin
 						A4alien_x = A4alien_x + 1'b1 + x_rate;
 						end
@@ -585,9 +649,11 @@ module SpaceInvaders(CLOCK_50,
 						end
 
 				if (A4 == 1'b1) begin
+					// if alive, draw
 					current_state = DRAW_A4;
 				end
 				else begin
+					// dead, move to next state
 					current_state = ERASE_BULLET;
 				end
 				
@@ -613,7 +679,10 @@ module SpaceInvaders(CLOCK_50,
 			ERASE_BULLET: begin
 				x = bullet_x;
 				y = bullet_y;
-				colour = 3'b000;
+				if (y != 8'd108)
+					colour = 3'b000;
+				else
+					colour = 3'b011;
 				current_state = UPDATE_BULLET;
 				end
 			UPDATE_BULLET: begin
@@ -622,14 +691,18 @@ module SpaceInvaders(CLOCK_50,
 					end
 				
 				if (bullet_y <= 8'd0) begin
+					// bullet reached top of screen
+					// reset position, and set to not fired
 					bullet_y = 8'd108;
 					is_fired = 1'b0;
 					bullet_x = p_x + 4;
 					end
 				else if (is_fired == 1'b1) begin
+					// move up
 					bullet_y = bullet_y - 1;
 					end
 				else begin
+					// follow player if not fired
 					bullet_y = 8'd108;
 					bullet_x = p_x + 4;
 					end
@@ -640,10 +713,65 @@ module SpaceInvaders(CLOCK_50,
 				x = bullet_x;
 				y = bullet_y;
 				colour = 3'b011;
+				if (SW[0])
+					current_state = ERASE_A_BULLET;
+				else
+					current_state = TEST_HIT;
+				end
+			ERASE_A_BULLET: begin
+				x = A_bullet_x;
+				y = A_bullet_y;
+				if (y != 8'd108)
+					colour = 3'b000;
+				else
+					colour = 3'b011;
+				current_state = UPDATE_A_BULLET;
+				end
+			UPDATE_A_BULLET: begin
+				A_bullet_y = A_bullet_y + 1;
+				current_state = DRAW_A_BULLET;
+				if (A_bullet_y > 8'd111)
+					// alien bullet reached bottom, test if it hit the player
+					current_state = TEST_A_HIT;
+				if ((~A1) && (~A2) && (~A3) && (~A4))
+					// all aliens dead, level up (increase speed)
+					current_state = LVL_UP;
+			end
+			DRAW_A_BULLET: begin 
+				x = A_bullet_x;
+				y = A_bullet_y;
+				colour = 3'b100;
 				current_state = TEST_HIT;
 				end
+			TEST_A_HIT: begin
+				// check if hit the player
+				if (((A_bullet_x <= p_x + 15) && (A_bullet_x >= p_x)) && ((A_bullet_y <= p_y + 7) && (A_bullet_y >= p_y)))
+					current_state = UPDATE_SCORE;
+				else begin
+					// set where the alien bullet fires from
+					// it fires from the first alive alien
+					if (A1 == 1'b1) begin
+						A_bullet_x = A1alien_x + 8'd8;
+						A_bullet_y = A1alien_y + 8'd8;
+						end
+					else if (A2 == 1'b1) begin
+						A_bullet_x = A2alien_x + 8'd8;
+						A_bullet_y = A2alien_y + 8'd8;
+						end
+					else if (A3 == 1'b1) begin
+						A_bullet_x = A3alien_x + 8'd8;
+						A_bullet_y = A3alien_y + 8'd8;
+						end
+					else if (A4 == 1'b1) begin
+						A_bullet_x = A4alien_x + 8'd8;
+						A_bullet_y = A4alien_y + 8'd8;
+						end
+					current_state = UPDATE_A_BULLET;
+				end
+			end
 			TEST_HIT: begin
 				 //test if the updated bullet hit the alien
+				 // if hit, update score, bullet fired set alien as dead, and erase the alien
 				if ((A1 == 1'b1) && ((bullet_x <= A1alien_x + 15) && (bullet_x >= A1alien_x)) && ((bullet_y <= A1alien_y + 7) && (bullet_y >= A1alien_y)))
 				begin
 					score = score + 1;
@@ -680,7 +808,7 @@ module SpaceInvaders(CLOCK_50,
 					current_state = LVL_UP;
 				end
 			LOSE: begin
-				// when game is lost, display
+				// when game is lost, display red screen of death
 				if (draw_count < 17'b1000_0000_0000_0000_0) begin
 					x = draw_count[7:0];
 					y = draw_count[15:8];
@@ -693,7 +821,7 @@ module SpaceInvaders(CLOCK_50,
 					end
 				end
 			WIN: begin
-				// when game is won, display
+				// when game is won, display green screen of win
 				if (draw_count < 17'b1000_0000_0000_0000_0) begin
 					x = draw_count[7:0];
 					y = draw_count[15:8];
@@ -706,21 +834,33 @@ module SpaceInvaders(CLOCK_50,
 					end
 				end
 			LVL_UP: begin
-				if (x_rate < 4) begin
+				// completed a level
+				// update the rate the aliens move left to right up to a level
+				if (x_rate < 3) begin
 					score = score + 2;
 					x_rate = x_rate + 1;
 					current_state = RESET_BLACK; 
 				end
 				else begin
-					current_state = WIN; 
+					// won the game (update the high score)
+					current_state = UPDATE_HIGHEST; 
 				end
 			end
-			
+			UPDATE_HIGHEST: begin
+				// update the high score
+				if (score > high_score)
+					high_score = score;
+				current_state = WIN;
+			end
 			UPDATE_SCORE: begin
+				// update the current score
 				if (score >= 3)
 					score = score - 3;
 				else
 					score = 12'b0;
+				if (score > high_score)
+					// new score is higher, update
+					high_score = score;
 				current_state = LOSE;
 			end
 			
@@ -730,7 +870,8 @@ module SpaceInvaders(CLOCK_50,
 	
 endmodule
  
-// 
+// module counts a number of clock ticks to simulate 60 frames per second
+// send go signal each frame counted
 module frame_counter(input clock, output reg go);
 	reg [19:0] count;
 	// 50 000 000 / 60 frames = 833 333 seconds per frame
